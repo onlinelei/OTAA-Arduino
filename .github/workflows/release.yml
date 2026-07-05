@@ -1,0 +1,71 @@
+name: Arduino Library CI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        board:
+          - esp32:esp32:esp32
+          - esp32:esp32:esp32s3
+          - esp8266:esp8266:nodemcuv2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install platform
+        run: |
+          arduino-cli core update-index
+          if [[ "${{ matrix.board }}" == "esp32:"* ]]; then
+            arduino-cli core install esp32:esp32
+          else
+            arduino-cli core install esp8266:esp8266
+          fi
+
+      - name: Install dependencies
+        run: |
+          arduino-cli lib install ArduinoJson
+
+      - name: Compile examples
+        run: |
+          for example in examples/*/; do
+            if [ -f "${example}/*.ino" ]; then
+              echo "Compiling ${example}..."
+              arduino-cli compile --fqbn ${{ matrix.board }} "${example}"
+            fi
+          done
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            src/*
+            examples/**/*
+            library.properties
+            keywords.txt
+            README.md
+            LICENSE

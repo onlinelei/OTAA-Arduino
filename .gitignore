@@ -1,0 +1,27 @@
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+lib/
+include/
+
+# Build
+build/
+*.o
+*.elf
+*.bin
+*.hex
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+*.bak

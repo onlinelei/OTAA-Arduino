@@ -1,0 +1,47 @@
+#######################################
+# Syntax Coloring Map for OTAA
+#######################################
+
+#######################################
+# Datatypes & Classes (KEYWORD1)
+#######################################
+
+OTAA	KEYWORD1
+FirmwareInfo	KEYWORD1
+OTAState	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+beginWithActivationCode	KEYWORD2
+checkUpdate	KEYWORD2
+update	KEYWORD2
+setFirmwareVersion	KEYWORD2
+setCheckInterval	KEYWORD2
+setAutoCheck	KEYWORD2
+autoCheck	KEYWORD2
+getState	KEYWORD2
+getProgress	KEYWORD2
+getLastError	KEYWORD2
+getFirmwareInfo	KEYWORD2
+getDeviceId	KEYWORD2
+getDeviceToken	KEYWORD2
+registerDevice	KEYWORD2
+onStateChange	KEYWORD2
+onProgress	KEYWORD2
+onError	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+OTA_IDLE	LITERAL1
+OTA_CHECKING	LITERAL1
+OTA_UPDATE_AVAILABLE	LITERAL1
+OTA_DOWNLOADING	LITERAL1
+OTA_INSTALLING	LITERAL1
+OTA_SUCCESS	LITERAL1
+OTA_FAILED	LITERAL1
+OTAA_VERSION	LITERAL1
