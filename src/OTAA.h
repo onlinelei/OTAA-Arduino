@@ -153,7 +153,7 @@ public:
 
     /**
      * 设置检查更新间隔
-     * @param intervalMs 间隔时间（毫秒），默认6小时
+     * @param intervalMs 间隔时间（毫秒），默认 1 分钟（60000）
      */
     void setCheckInterval(unsigned long intervalMs);
 
