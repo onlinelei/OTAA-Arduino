@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-04
+
+### Fixed
+- **NTP 默认服务器国内可达**：之前默认 `pool.ntp.org` + `time.nist.gov`，国内运营商常屏蔽 UDP 123，导致设备启动后时间同步项一直失败（myTV BootScreen 的 Time 项红色不绿）。改为默认 `ntp.aliyun.com` + `cn.pool.ntp.org`，超时从 5s 提到 10s，并去掉 `if (_timeSynced) return` 早返回（确保每次 `syncTime()` 都真正重试，不依赖标志位的脏状态），失败原因写入 `_lastError` 供上层调用方读取。
+
 ## [1.4.0] - 2026-09-04
 
 ### Added
