@@ -930,22 +930,21 @@ bool OTAA::isLogBufferFull() {
 }
 
 void OTAA::syncTime() {
-    if (_timeSynced) return;
-    
-    Serial.println("[OTAA] Syncing NTP time...");
-    configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+    // 默认 NTP 服务器：使用国内可达的公共 NTP
+    // pool.ntp.org / time.nist.gov 在国内常被运营商屏蔽 UDP 123，导致同步失败
+    configTime(8 * 3600, 0, "ntp.aliyun.com", "cn.pool.ntp.org");
     // 显式设置时区环境变量，确保 localtime() 返回 UTC+8
     // POSIX TZ 格式：CST-8 表示 UTC+8（负偏移 = 东时区）
     setenv("TZ", "CST-8", 1);
     tzset();
-    
-    // 等待时间同步
+
+    // 等待时间同步（最长 10s，20 次 × 500ms）
     int retry = 0;
-    while (time(nullptr) < 1000000000 && retry < 10) {
+    while (time(nullptr) < 1000000000 && retry < 20) {
         delay(500);
         retry++;
     }
-    
+
     if (time(nullptr) >= 1000000000) {
         _timeSynced = true;
         time_t now = time(nullptr);
@@ -954,6 +953,8 @@ void OTAA::syncTime() {
         strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
         Serial.printf("[OTAA] NTP time synced: %s (UTC+8)\n", timeStr);
     } else {
-        Serial.println("[OTAA] NTP time sync failed");
+        _timeSynced = false;
+        _lastError = "NTP timeout (10s)";
+        Serial.println("[OTAA] NTP time sync failed - check WiFi/firewall/NTP UDP:123");
     }
 }
