@@ -10,6 +10,7 @@
 6. [Error Handling](#error-handling)
 7. [Best Practices](#best-practices)
 8. [Troubleshooting](#troubleshooting)
+9. [OTA 检查时序与立即触发](#ota-检查时序与立即触发)
 
 ## Getting Started
 
@@ -172,6 +173,81 @@ void loop() {
     }
 }
 ```
+
+## OTA 检查时序与立即触发
+
+> 这节把分散在 `OTAA.cpp` 的事实统一写出来，给做集成 / 排查的人一份权威参考，避免重复"OTA 默认是 5 分钟"这类估算错误。
+
+### 默认间隔表（库层面默认值）
+
+| 任务 | 间隔 | 字段 | 出处 |
+|------|------|------|------|
+| OTA 检查 | **60 秒（1 分钟）** | `_checkInterval` | `src/OTAA.cpp:13` |
+| 心跳 | 60 秒 | `_heartbeatInterval` | `src/OTAA.cpp:17` |
+| 命令检查 | 5 秒 | `_commandCheckInterval` | `src/OTAA.cpp:24` |
+| 日志上传 | 5 分钟 | `_logUploadInterval` | `src/OTAA.h:285` 注释 |
+
+可以在 `begin()` 之后用 `setXxxInterval()` 修改。
+
+### 一条新固件从发布到落地的完整链路
+
+```
+平台 publish v1.7.0  →  platforms.latest = 1.7.0
+                                │
+设备 loop() (≤60s 内)           │
+  ├─ heartbeat()                 │   POST /api/device/heartbeat
+  │     body: {fwVersion: "1.6.99", ipAddress: "..."}
+  │                              │
+  └─ checkUpdate()               │   GET  /api/device/ota/check?current_version=1.6.99
+            │                    │
+            └────────────────────┴→  后端 FirmwareServiceImpl.checkUpdate
+                                            └→ SemanticVersion.hasUpdate("1.6.99", "1.7.0")
+                                                 (严格 latest > current)
+                                                 → true
+                                          返回 { updateAvailable: true,
+                                                 version: "1.7.0",
+                                                 downloadUrl: "...",
+                                                 fileMd5: "...",
+                                                 releaseNotes: "..." }
+                       │
+                       └→ update()  下载 → MD5 校验 → 切换分区重启
+```
+
+**关键判定**：`ota-manager` 后端的 `SemanticVersion.hasUpdate(current, latest)` 是严格 **`latest.compareTo(current) > 0`**——也就是说"设备的当前版本号 **必须严格小于** 平台 latest"才会更新。这是为什么历史残留的 `1.6.99` 卡住 OTA、必须发 `1.7.0` 跨过去的根因。
+
+### forceUpdate：立即触发 OTA 检查（不等 1 分钟）
+
+服务器可以在心跳响应里下发 `forceUpdate: true`，让设备**下次心跳就立刻**做 ota/check，不等默认的 60 秒。
+
+链路：
+
+```
+控制台 (设备列表/详情页"立即触发"按钮)
+        │ POST /api/devices/{deviceId}/trigger-check
+        ▼
+后端 DeviceController.triggerCheckUpdate
+        │
+        └→ DeviceServiceImpl.triggerCheckUpdate
+                device.setForceUpdate(true)
+                deviceMapper.updateById(device)
+                          │
+                          ▼
+设备心跳                         │
+        POST /api/device/heartbeat → 服务器读到 force_update=true → 重置为 false
+                          │
+        响应 { forceUpdate: true, serverTime: "..." }
+                          │
+                          ▼
+设备 autoCheck() 处理心跳响应 (OTAA.cpp:172)
+        if (_forceUpdate) { _lastCheckTime = 0; }   // 立即触发
+                          │
+                          ▼
+        下一次 loop() 进入 ota/check 分支 → checkUpdate() → update()
+```
+
+控制台前端已经接好（`ota-frontend/src/views/console/devices/{list,detail}.vue` 都 import 了 `triggerCheckUpdate`，详见 `ota-frontend/src/api/devices.ts`）。
+
+**实战用法**：发布完新固件想立刻验证 → 去设备列表点"立即触发" → 设备下次心跳回来就升级，**几秒**生效，不用干等 60 秒。
 
 ## Callbacks
 

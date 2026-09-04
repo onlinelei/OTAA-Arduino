@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`setCheckInterval()` 注释错误**：`OTAA.h` 之前写"默认 6 小时"，与 `OTAA.cpp:13` 实际 `_checkInterval(60 * 1000) // 1 minute` 不一致。修正为"默认 1 分钟（60000ms）"。纯文档修正，不影响 v1.4.1 已发布版本运行时行为。
+
+### Added
+- **OTA 时序与 forceUpdate 立即触发文档沉淀**：把分散在 `OTAA.cpp` / `docs/USAGE.md` / `ota-manager` 后端 `DeviceServiceImpl` / `FirmwareServiceImpl` 的事实统一写进 `docs/USAGE.md` 的"OTA 检查时序与立即触发"小节，给后续接入者一份权威参考，避免再次出现"OTA 默认是 5 分钟"这类估算错误。
+  - 默认间隔表（OTA / 心跳 / 命令检查 / 日志上传）
+  - 完整更新链路（`autoCheck` → `checkUpdate` → `SemanticVersion.hasUpdate` 严格 `>`）
+  - `forceUpdate` 立即触发链路（控制台按钮 → `triggerCheckUpdate` → `force_update=true` → 下次心跳立即 `checkUpdate`）
+
 ## [1.4.1] - 2026-09-04
 
 ### Fixed
