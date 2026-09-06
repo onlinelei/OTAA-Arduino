@@ -6,6 +6,7 @@
  */
 
 #include "OTAA.h"
+#include "CommandDispatcher.h"
 
 OTAA::OTAA()
     : _state(OTA_IDLE)
@@ -752,6 +753,22 @@ String OTAA::getChipId() {
 
 void OTAA::onCommand(CommandCallback callback) { _commandCallback = callback; }
 
+void OTAA::enableCommandDispatcher() {
+    CommandDispatcher& dispatcher = CommandDispatcher::getInstance();
+
+    // 把 OTAA 实例注入 dispatcher，handler 里可用 getOTAAPtr() 上传文件
+    dispatcher.setUserData(this);
+
+    onCommand([this](int commandId, String command, String params) {
+        CommandResult result = CommandDispatcher::getInstance().dispatch(commandId, command, params);
+        // 无论成功失败都立即回执，避免命令一直挂在执行中直到超时
+        ackCommand(commandId, result.isSuccess, result.result, result.errorMsg);
+    });
+
+    Serial.printf("[OTAA] CommandDispatcher enabled, %d handler(s): %s\n",
+                  dispatcher.getHandlerCount(), dispatcher.getRegisteredCommands().c_str());
+}
+
 bool OTAA::checkCommands() {
     if (!_initialized) return false;
     if (_currentCommandId > 0) return false;
@@ -780,9 +797,16 @@ DeviceCommand OTAA::fetchPendingCommand() {
 
     if (response.isEmpty()) return cmd;
 
-    DynamicJsonDocument doc(512);
+    // 容量按响应长度动态分配：params 可能很长（如 stock_config 的多股票 JSON），
+    // 固定 512 会导致解析失败 → 命令拿不到 id → 服务端一直挂在执行中
+    size_t capacity = response.length() * 2;
+    if (capacity < 1024) capacity = 1024;
+    DynamicJsonDocument doc(capacity);
     DeserializationError error = deserializeJson(doc, response);
-    if (error) return cmd;
+    if (error) {
+        Serial.printf("[OTAA] Pending command JSON parse error: %s\n", error.c_str());
+        return cmd;
+    }
 
     if (!doc["success"].as<bool>()) return cmd;
     if (doc["data"].isNull()) return cmd;
@@ -798,7 +822,8 @@ DeviceCommand OTAA::fetchPendingCommand() {
 bool OTAA::ackCommand(int commandId, bool success, const String& result, const String& errorMsg) {
     String url = _serverUrl + "/api/device/commands/" + String(commandId) + "/ack";
 
-    DynamicJsonDocument doc(512);
+    // 容量需容纳 result / errorMsg，太小会序列化截断导致服务端解析失败
+    DynamicJsonDocument doc(512 + result.length() + errorMsg.length());
     doc["status"] = success ? 2 : 3;
     if (result.length() > 0) doc["result"] = result;
     if (errorMsg.length() > 0) doc["errorMsg"] = errorMsg;

@@ -24,6 +24,7 @@
 #define OTAA_H
 
 #include <Arduino.h>
+#include <functional>
 
 #if defined(ESP32)
 #include <WiFi.h>
@@ -87,7 +88,9 @@ struct HeartbeatResponse {
 typedef void (*OTAStateCallback)(OTAState state);
 typedef void (*OTAProgressCallback)(int progress, size_t downloaded, size_t total);
 typedef void (*OTAErrorCallback)(const String& error);
-typedef void (*CommandCallback)(int commandId, String command, String params);
+// 注意: 用 std::function 而非裸函数指针，这样回调可以捕获上下文（如 this）。
+// 传普通函数指针仍然兼容，会隐式转换为 std::function。
+typedef std::function<void(int commandId, String command, String params)> CommandCallback;
 
 /**
  * 凭证存储接口
@@ -243,6 +246,17 @@ public:
      * 当收到新命令时触发
      */
     void onCommand(CommandCallback callback);
+
+    /**
+     * 启用 CommandDispatcher 模式（推荐，替代手动 onCommand）
+     *
+     * 设备端用 REGISTER_COMMAND(XXXHandler) 注册好处理器后调用本方法：
+     *   - 收到命令自动按 command 编码路由到对应 handler
+     *   - handler 返回后立即 ack 结果（成功/失败）
+     *   - 找不到 handler 时立即 ack 失败，不再干等到本地超时
+     *   - OTAA 实例指针注入 dispatcher，handler 内可用 getOTAAPtr() 上传文件
+     */
+    void enableCommandDispatcher();
 
     /**
      * 上报命令执行结果
