@@ -51,6 +51,23 @@ void OTAA::confirmFirmwareValid() {
 #endif
 }
 
+// ========== 固件 MD5 计算 ==========
+// ESP32: ESP.getSketchMD5() 返回编译时 embedding 的 MD5（linker 阶段计算，运行时读取）
+// 如果 version.h 变了但 .o 没重编，这个 MD5 也不会变——正好用作"实际编译产物"的唯一标识
+
+void OTAA::computeFirmwareMD5() {
+#if defined(ESP32)
+    _firmwareMd5 = ESP.getSketchMD5();
+    if (_firmwareMd5.length() > 0) {
+        Serial.println("[OTAA] Firmware MD5: " + _firmwareMd5);
+    } else {
+        Serial.println("[OTAA] Warning: firmware MD5 not available (not embedded by linker)");
+    }
+#else
+    _firmwareMd5 = "";
+#endif
+}
+
 // ========== 凭证存储 ==========
 
 void OTAA::saveCredentials() {
@@ -77,6 +94,7 @@ bool OTAA::loadCredentials() {
 
 bool OTAA::begin(const char* serverUrl, const char* deviceId, const char* deviceToken) {
     confirmFirmwareValid();
+    computeFirmwareMD5();  // 计算当前固件 MD5，用于 OTA 比对
 
     _serverUrl = String(serverUrl);
     _deviceId = String(deviceId);
@@ -100,6 +118,7 @@ bool OTAA::begin(const char* serverUrl, const char* deviceId, const char* device
 
 bool OTAA::beginWithActivationCode(const char* serverUrl, const char* activationCode) {
     confirmFirmwareValid();
+    computeFirmwareMD5();  // 计算当前固件 MD5，用于 OTA 比对
 
     _serverUrl = String(serverUrl);
     _activationCode = String(activationCode);
@@ -239,6 +258,9 @@ bool OTAA::checkUpdate() {
     setState(OTA_CHECKING);
 
     String url = _serverUrl + "/api/device/ota/check?current_version=" + _firmwareVersion;
+    if (_firmwareMd5.length() > 0) {
+        url += "&firmware_md5=" + _firmwareMd5;
+    }
     String response = httpGet(url);
 
     if (response.isEmpty()) {

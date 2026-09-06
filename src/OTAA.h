@@ -321,6 +321,7 @@ private:
     String _deviceToken;
     String _activationCode;
     String _firmwareVersion;
+    String _firmwareMd5;    // 当前运行固件的 MD5（启动时计算）
 
     OTAState _state;
     int _progress;
@@ -375,6 +376,7 @@ private:
     DeviceCommand fetchPendingCommand();
 
     void confirmFirmwareValid();
+    void computeFirmwareMD5();  // 计算当前固件分区 MD5（ESP32: ESP.getSketchMD5()）
     void saveCredentials();
     bool loadCredentials();
     
