@@ -150,6 +150,7 @@ public:
     FirmwareInfo getFirmwareInfo();
     String getDeviceId();
     String getDeviceToken();
+    OTAAHAL* getHal() { return _hal; }  // 供流式回调等内部使用
 
     // 回调注册
     void onStateChange(OTAStateCallback callback);
@@ -216,6 +217,9 @@ private:
     void setState(OTAState state);
     void setProgress(int progress, size_t downloaded = 0, size_t total = 0);
     void setError(const String& error);
+
+    // 流式下载回调（需要访问 setProgress）
+    friend bool otaStreamCallback(const uint8_t* data, size_t len, void* userdata);
 
     bool downloadFirmware();
     String httpGet(const String& url);

@@ -162,6 +162,49 @@ public:
         return status;
     }
 
+    // ========== 流式 HTTP ==========
+
+    int httpGetStream(const char* url, const char* token,
+                      HttpStreamCallback callback, void* userdata,
+                      size_t* totalSize) override {
+        esp_http_client_config_t config = {};
+        config.url = url;
+        config.method = HTTP_METHOD_GET;
+        config.timeout_ms = 60000;
+
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        if (token && token[0]) {
+            esp_http_client_set_header(client, "Authorization",
+                                       (std::string("Bearer ") + token).c_str());
+        }
+
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            esp_http_client_cleanup(client);
+            return -1;
+        }
+
+        int content_length = esp_http_client_fetch_headers(client);
+        if (totalSize) *totalSize = content_length > 0 ? content_length : 0;
+        int status = esp_http_client_get_status_code(client);
+
+        if (status == 200) {
+            uint8_t buf[4096];
+            while (true) {
+                int read = esp_http_client_read(client, (char*)buf, sizeof(buf));
+                if (read <= 0) break;
+                if (!callback(buf, (size_t)read, userdata)) {
+                    status = -2;  // 用户中止
+                    break;
+                }
+            }
+        }
+
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return status;
+    }
+
     // ========== OTA ==========
 
     bool otaBegin(size_t imageSize) override {

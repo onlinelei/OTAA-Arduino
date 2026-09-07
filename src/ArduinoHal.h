@@ -150,6 +150,87 @@ public:
 #endif
     }
 
+    // ========== 流式 HTTP ==========
+
+    int httpGetStream(const char* url, const char* token,
+                      HttpStreamCallback callback, void* userdata,
+                      size_t* totalSize) override {
+#if defined(ESP32)
+        HTTPClient http;
+        http.begin(url);
+        if (token && token[0]) {
+            http.addHeader("Authorization", String("Bearer ") + token);
+        }
+        http.setTimeout(60000);
+
+        int httpCode = http.GET();
+        if (httpCode != 200) {
+            http.end();
+            return httpCode;
+        }
+
+        if (totalSize) *totalSize = http.getSize();
+
+        uint8_t buf[4096];
+        WiFiClient* stream = http.getStreamPtr();
+
+        while (http.connected()) {
+            size_t avail = stream->available();
+            if (avail) {
+                size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+                size_t bytesRead = stream->readBytes(buf, toRead);
+                if (!callback(buf, bytesRead, userdata)) {
+                    http.end();
+                    return -2;  // 用户中止
+                }
+            }
+            if (stream->available() == 0 && !http.connected()) break;
+            ::delay(1);
+            ::yield();
+        }
+
+        http.end();
+        return 200;
+#elif defined(ESP8266)
+        WiFiClient client;
+        HTTPClient http;
+        http.begin(client, url);
+        if (token && token[0]) {
+            http.addHeader("Authorization", String("Bearer ") + token);
+        }
+        http.setTimeout(60000);
+
+        int httpCode = http.GET();
+        if (httpCode != 200) {
+            http.end();
+            return httpCode;
+        }
+
+        if (totalSize) *totalSize = http.getSize();
+
+        uint8_t buf[4096];
+        WiFiClient* stream = http.getStreamPtr();
+
+        while (http.connected()) {
+            size_t avail = stream->available();
+            if (avail) {
+                size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+                size_t bytesRead = stream->readBytes(buf, toRead);
+                if (!callback(buf, bytesRead, userdata)) {
+                    http.end();
+                    return -2;
+                }
+            }
+            if (stream->available() == 0 && !http.connected()) break;
+            ::delay(1);
+            ::yield();
+        }
+
+        http.end();
+        return 200;
+#endif
+    }
+
     // ========== OTA ==========
 
     bool otaBegin(size_t imageSize) override {

@@ -65,6 +65,24 @@ public:
                                   const uint8_t* data, size_t len,
                                   const char* filename, String& response) = 0;
 
+    // ========== 流式 HTTP ==========
+
+    /**
+     * 流式 HTTP GET — 用于固件下载等大文件场景
+     * 数据通过回调逐块返回，不在内存中累积整个响应。
+     *
+     * @param url 完整 URL
+     * @param token Bearer Token
+     * @param callback 数据回调：(data, len) → 返回 true 继续，false 中止
+     * @param userdata 透传给回调的用户指针
+     * @param[out] totalSize 响应的 Content-Length（如果服务端提供了的话）
+     * @return HTTP 状态码，失败返回负数
+     */
+    typedef bool (*HttpStreamCallback)(const uint8_t* data, size_t len, void* userdata);
+    virtual int httpGetStream(const char* url, const char* token,
+                              HttpStreamCallback callback, void* userdata,
+                              size_t* totalSize) = 0;
+
     // ========== OTA ==========
 
     /**

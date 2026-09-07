@@ -385,6 +385,32 @@ bool OTAA::registerDevice() {
 
 // ========== 流式固件下载 ==========
 
+// OTA 流式回调上下文
+struct OtaStreamCtx {
+    OTAA* self;
+    size_t totalSize;
+    size_t downloaded;
+    bool failed;
+};
+
+static bool otaStreamCallback(const uint8_t* data, size_t len, void* userdata) {
+    OtaStreamCtx* ctx = (OtaStreamCtx*)userdata;
+    OTAA* self = ctx->self;
+
+    size_t written = self->getHal()->otaWrite(data, len);
+    if (written == 0) {
+        ctx->failed = true;
+        return false;
+    }
+
+    ctx->downloaded += len;
+    if (ctx->totalSize > 0) {
+        self->setProgress((int)((ctx->downloaded * 100) / ctx->totalSize),
+                          ctx->downloaded, ctx->totalSize);
+    }
+    return true;
+}
+
 bool OTAA::downloadFirmware() {
     _hal->log('I', "OTAA", "Downloading firmware (streaming)...");
     _hal->log('I', "OTAA", "URL: %s, Size: %u bytes",
@@ -392,24 +418,11 @@ bool OTAA::downloadFirmware() {
     otaLog(String("[OTAA] Downloading firmware v") + _firmwareInfo.version.c_str()
            + ", size: " + String(_firmwareInfo.fileSize).c_str() + " bytes");
 
-    // 用 HTTP 流式拉取 + HAL 的 OTA 写入
-    // 这里需要分块下载，但 HAL 的 httpGet 会把整个响应读到内存
-    // 对于大固件（~2MB），需要改用流式接口
-    //
-    // 简化方案：直接拉取完整响应（ESP32 有足够 RAM），再写入 OTA
-    // TODO: 未来可给 HAL 增加 httpGetStream() 接口实现真正的流式
+    size_t totalSize = 0;
+    OtaStreamCtx ctx = { this, 0, 0, false };
 
-    String response;
-    int status = _hal->httpGet(_firmwareInfo.downloadUrl.c_str(),
-                               _deviceToken.c_str(), response);
-
-    if (status != 200 || response.isEmpty()) {
-        setError(String("Download failed: HTTP ") + String(status).c_str());
-        return false;
-    }
-
-    size_t totalSize = response.length();
-    if (!_hal->otaBegin(totalSize)) {
+    // 先 otaBegin（需要预估大小）
+    if (!_hal->otaBegin(_firmwareInfo.fileSize > 0 ? _firmwareInfo.fileSize : 2 * 1024 * 1024)) {
         setError("OTA begin failed");
         return false;
     }
@@ -418,22 +431,18 @@ bool OTAA::downloadFirmware() {
         _hal->otaSetMD5(_firmwareInfo.md5.c_str());
     }
 
-    // 分块写入
-    const uint8_t* data = (const uint8_t*)response.c_str();
-    size_t written = 0;
-    size_t chunkSize = 4096;
+    // 流式下载：数据通过回调逐块写入 OTA 分区，不在内存中累积
+    int status = _hal->httpGetStream(_firmwareInfo.downloadUrl.c_str(),
+                                     _deviceToken.c_str(),
+                                     otaStreamCallback, &ctx,
+                                     &totalSize);
 
-    while (written < totalSize) {
-        size_t toWrite = (totalSize - written > chunkSize) ? chunkSize : (totalSize - written);
-        size_t result = _hal->otaWrite(data + written, toWrite);
-        if (result == 0) {
-            setError("OTA write failed");
-            return false;
-        }
-        written += result;
-        setProgress((written * 100) / totalSize, written, totalSize);
-        _hal->yield();
+    if (status != 200 || ctx.failed) {
+        setError(String("Download failed: HTTP ") + String(status).c_str());
+        return false;
     }
+
+    ctx.totalSize = totalSize > 0 ? totalSize : _firmwareInfo.fileSize;
 
     setState(OTA_INSTALLING);
     if (!_hal->otaEnd(_firmwareInfo.md5.length() > 0 ? _firmwareInfo.md5.c_str() : nullptr)) {
@@ -441,7 +450,7 @@ bool OTAA::downloadFirmware() {
         return false;
     }
 
-    _hal->log('I', "OTAA", "Firmware installed successfully");
+    _hal->log('I', "OTAA", "Firmware installed successfully (%u bytes)", (unsigned)ctx.downloaded);
     otaLog("[OTAA] Firmware installed successfully");
     return true;
 }
