@@ -8,6 +8,11 @@
 #include "OTAA.h"
 #include "CommandDispatcher.h"
 
+// ESP-IDF 兼容：Arduino 的 byte 类型
+#if !defined(ARDUINO)
+typedef uint8_t byte;
+#endif
+
 // ========== 构造 / 析构 ==========
 
 OTAA::OTAA()
@@ -393,7 +398,7 @@ struct OtaStreamCtx {
     bool failed;
 };
 
-static bool otaStreamCallback(const uint8_t* data, size_t len, void* userdata) {
+bool otaStreamCallback(const uint8_t* data, size_t len, void* userdata) {
     OtaStreamCtx* ctx = (OtaStreamCtx*)userdata;
     OTAA* self = ctx->self;
 
@@ -501,7 +506,7 @@ String OTAA::generateDeviceId() {
     String chipId = _hal->getChipId();
     // 用 chipId 的 SHA256 前 8 字节作为 deviceId
     // mbedTLS 在两个框架下都可用
-    byte shaResult[32];
+    byte shaResult[32] = {0};
 
 #if defined(ESP32) || defined(ESP_IDF_VERSION)
     mbedtls_md_context_t ctx;

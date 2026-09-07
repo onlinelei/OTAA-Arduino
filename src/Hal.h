@@ -14,13 +14,95 @@
 #include <cstdint>
 #include <cstdarg>
 
-// 跨框架字符串类型：Arduino 用 String，ESP-IDF 用 std::string
-// 这里用 typedef 统一，HAL 实现层自行 include 对应头文件
+// 跨框架字符串类型：Arduino 用 String，ESP-IDF 用兼容封装
 #if defined(ARDUINO)
 #include <Arduino.h>
 #else
 #include <string>
-typedef std::string String;
+#include <sstream>
+
+/**
+ * String — Arduino String 兼容封装（基于 std::string）
+ *
+ * 提供 Arduino String 常用方法的 std::string 等价实现，
+ * 让 OTAA.cpp/OTALogger.h 在 ESP-IDF 下零改动编译。
+ */
+class String : public std::string {
+public:
+    using std::string::string;  // 继承所有构造函数
+    String() = default;
+    String(const std::string& s) : std::string(s) {}
+    String(const char* s) : std::string(s ? s : "") {}
+    String(int val) : std::string(std::to_string(val)) {}
+    String(long val) : std::string(std::to_string(val)) {}
+    String(unsigned long val) : std::string(std::to_string(val)) {}
+    String(size_t val) : std::string(std::to_string(val)) {}
+    String(double val, int digits = 2) {
+        std::ostringstream oss;
+        oss.precision(digits);
+        oss << std::fixed << val;
+        assign(oss.str());
+    }
+
+    bool isEmpty() const { return empty(); }
+
+    String substring(size_t from) const {
+        return String(substr(from));
+    }
+    String substring(size_t from, size_t to) const {
+        return String(substr(from, to - from));
+    }
+
+    bool endsWith(const String& suffix) const {
+        if (suffix.size() > size()) return false;
+        return compare(size() - suffix.size(), suffix.size(), suffix) == 0;
+    }
+
+    bool startsWith(const String& prefix) const {
+        if (prefix.size() > size()) return false;
+        return compare(0, prefix.size(), prefix) == 0;
+    }
+
+    char charAt(size_t index) const { return at(index); }
+
+    int indexOf(char c, size_t from = 0) const {
+        auto pos = find(c, from);
+        return pos == std::string::npos ? -1 : (int)pos;
+    }
+
+    int indexOf(const String& s, size_t from = 0) const {
+        auto pos = find(s, from);
+        return pos == std::string::npos ? -1 : (int)pos;
+    }
+
+    void remove(size_t index, size_t count = std::string::npos) {
+        erase(index, count);
+    }
+
+    String& operator+=(const String& other) {
+        append(other);
+        return *this;
+    }
+
+    // 与 const char* 的 + 运算
+    friend String operator+(const String& lhs, const char* rhs) {
+        return String(static_cast<const std::string&>(lhs) + rhs);
+    }
+    friend String operator+(const char* lhs, const String& rhs) {
+        return String(lhs + static_cast<const std::string&>(rhs));
+    }
+    friend String operator+(const String& lhs, const String& rhs) {
+        return String(static_cast<const std::string&>(lhs) + static_cast<const std::string&>(rhs));
+    }
+
+    // ArduinoJson v7 需要 write() 方法（Arduino Print 接口）
+    // 提供空实现让 ArduinoJson 的 Writer 模板匹配成功
+    size_t write(uint8_t c) { push_back((char)c); return 1; }
+    size_t write(const uint8_t* buf, size_t len) { append((const char*)buf, len); return len; }
+
+    // bool 转换（用于 if(response) 检查和 return String → bool）
+    operator bool() const { return !empty(); }
+};
 #endif
 
 class OTAAHAL {

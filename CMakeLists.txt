@@ -18,10 +18,12 @@ if(IDF_TARGET)
             esp_http_client
             esp_wifi
             esp_netif
-            esp_ota_ops
+            esp_system
+            app_update
             esp_timer
             mbedtls
             json
+            ArduinoJson
     )
 else()
     # PlatformIO / standalone mode — no CMake action needed
