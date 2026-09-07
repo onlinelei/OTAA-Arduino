@@ -27,6 +27,8 @@
  * 提供 Arduino String 常用方法的 std::string 等价实现，
  * 让 OTAA.cpp/OTALogger.h 在 ESP-IDF 下零改动编译。
  */
+#ifndef OTAA_STRING_COMPAT
+#define OTAA_STRING_COMPAT
 class String : public std::string {
 public:
     using std::string::string;  // 继承所有构造函数
@@ -103,6 +105,7 @@ public:
     // bool 转换（用于 if(response) 检查和 return String → bool）
     operator bool() const { return !empty(); }
 };
+#endif // OTAA_STRING_COMPAT
 #endif
 
 class OTAAHAL {
