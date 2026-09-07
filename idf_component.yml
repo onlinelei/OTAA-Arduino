@@ -1,0 +1,15 @@
+## OTAA-Arduino - ESP-IDF Component Manifest
+##
+## This file allows installing OTAA via ESP Component Registry:
+##   idf.py add-dependency "otaa-platform/otaa-arduino"
+##
+## Or locally:
+##   Place this directory in your project's components/ folder
+
+dependencies:
+  idf:
+    version: ">=5.0.0"
+
+  # ArduinoJson is available via PlatformIO lib_deps,
+  # or install it as an ESP-IDF component separately.
+  # If using cJSON instead, modify OTAA.cpp to use cJSON APIs.

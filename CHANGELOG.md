@@ -7,14 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **`setCheckInterval()` 注释错误**：`OTAA.h` 之前写"默认 6 小时"，与 `OTAA.cpp:13` 实际 `_checkInterval(60 * 1000) // 1 minute` 不一致。修正为"默认 1 分钟（60000ms）"。纯文档修正，不影响 v1.4.1 已发布版本运行时行为。
+## [2.0.0] - 2026-09-07
 
-### Added
-- **OTA 时序与 forceUpdate 立即触发文档沉淀**：把分散在 `OTAA.cpp` / `docs/USAGE.md` / `ota-manager` 后端 `DeviceServiceImpl` / `FirmwareServiceImpl` 的事实统一写进 `docs/USAGE.md` 的"OTA 检查时序与立即触发"小节，给后续接入者一份权威参考，避免再次出现"OTA 默认是 5 分钟"这类估算错误。
-  - 默认间隔表（OTA / 心跳 / 命令检查 / 日志上传）
-  - 完整更新链路（`autoCheck` → `checkUpdate` → `SemanticVersion.hasUpdate` 严格 `>`）
-  - `forceUpdate` 立即触发链路（控制台按钮 → `triggerCheckUpdate` → `force_update=true` → 下次心跳立即 `checkUpdate`）
+### Changed — BREAKING: CORE + HAL 架构重构
+- **全新架构**：OTAA 库拆分为「核心业务层」+「HAL 适配层」，参考 RadioLib 单仓库模式
+  - `src/Hal.h` — OTAAHAL 纯虚接口（HTTP/OTA/系统三类共 18 个方法）
+  - `src/ArduinoHal.h` — Arduino 框架适配（WiFi.h / HTTPClient / Update / Serial）
+  - `src/EspHal.h` — ESP-IDF 框架适配（esp_wifi / esp_http_client / esp_ota_ops / ESP_LOG）
+  - `OTAA.cpp` 核心业务全部改为 `hal->xxx()` 调用，零直接框架依赖
+- **自动框架检测**：`#if defined(ARDUINO)` 选 ArduinoHal，`#if defined(ESP_IDF_VERSION)` 选 EspHal，用户代码零改动
+- **支持自定义 HAL 注入**：`OTAA(OTAAHAL* hal)` 构造函数，可接入 Zephyr / Linux / 测试 Mock
+- **ESP-IDF 构建支持**：新增 `CMakeLists.txt`（idf_component_register）和 `idf_component.yml`
+- **OTALogger / CommandDispatcher 去 Arduino 依赖**：不再 include Arduino.h，纯 C++ 实现
+
+### Fixed
+- **`setCheckInterval()` 注释错误**：修正为"默认 1 分钟（60000ms）"
 
 ## [1.4.1] - 2026-09-04
 
