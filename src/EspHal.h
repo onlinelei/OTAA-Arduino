@@ -27,6 +27,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
+#include "esp_mac.h"
 #include "mbedtls/md.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -208,9 +209,9 @@ public:
     // ========== OTA ==========
 
     bool otaBegin(size_t imageSize) override {
-        _otaHandle = esp_ota_get_next_update_partition(NULL);
-        if (!_otaHandle) return false;
-        return esp_ota_begin(_otaHandle, imageSize, &_otaHandle) == ESP_OK;
+        _otaPartition = esp_ota_get_next_update_partition(NULL);
+        if (!_otaPartition) return false;
+        return esp_ota_begin(_otaPartition, imageSize, &_otaHandle) == ESP_OK;
     }
 
     size_t otaWrite(const uint8_t* data, size_t len) override {
@@ -222,7 +223,7 @@ public:
 
     bool otaEnd(const char* md5) override {
         if (esp_ota_end(_otaHandle) != ESP_OK) return false;
-        if (esp_ota_set_boot_partition(_otaHandle) != ESP_OK) return false;
+        if (esp_ota_set_boot_partition(_otaPartition) != ESP_OK) return false;
         return true;
     }
 
@@ -323,6 +324,7 @@ public:
 
 private:
     esp_ota_handle_t _otaHandle = 0;
+    const esp_partition_t* _otaPartition = nullptr;
     char _expectedMD5[33] = {};
 };
 
