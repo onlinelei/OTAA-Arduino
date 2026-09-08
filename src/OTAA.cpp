@@ -697,6 +697,10 @@ bool OTAA::isLogBufferFull() {
 }
 
 void OTAA::syncTime() {
+    if (!_hal) {
+        _lastError = "OTAA not initialized (hal is null)";
+        return;
+    }
     _hal->syncTime(8 * 3600, "ntp.aliyun.com");
     if (time(nullptr) >= 1000000000) {
         _timeSynced = true;
