@@ -18,6 +18,11 @@
 #if defined(ARDUINO)
 #include <Arduino.h>
 #else
+// ESP-IDF 框架检测：必须在 OTAA 构造函数前定义 ESP_IDF_VERSION
+// 否则 #elif defined(ESP_IDF_VERSION) 分支不会执行，_hal 始终为 nullptr
+#if __has_include("esp_idf_version.h")
+  #include "esp_idf_version.h"
+#endif
 #include <string>
 #include <sstream>
 

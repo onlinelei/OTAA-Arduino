@@ -44,15 +44,13 @@ OTAA::OTAA()
 {
     _firmwareVersion = "1.0.0";
 
-    // 自动创建默认 HAL
+    // 自动创建默认 HAL（堆分配，避免 static 局部变量的初始化顺序问题）
 #if defined(ARDUINO)
-    static ArduinoHal defaultHal;
-    _hal = &defaultHal;
-    _ownsHal = false;  // 静态对象，不负责销毁
+    _hal = new ArduinoHal();
+    _ownsHal = true;
 #elif defined(ESP_IDF_VERSION)
-    static EspHal defaultHal;
-    _hal = &defaultHal;
-    _ownsHal = false;
+    _hal = new EspHal();
+    _ownsHal = true;
 #endif
 }
 
@@ -64,7 +62,10 @@ OTAA::OTAA(OTAAHAL* hal)
 }
 
 OTAA::~OTAA() {
-    // 静态 HAL 不需要释放
+    if (_ownsHal && _hal) {
+        delete _hal;
+        _hal = nullptr;
+    }
 }
 
 // ========== 凭证存储 ==========
@@ -92,6 +93,7 @@ bool OTAA::loadCredentials() {
 // ========== 初始化 ==========
 
 void OTAA::confirmFirmwareValid() {
+    if (!_hal) return;
     _hal->confirmFirmwareValid();
 }
 
@@ -103,6 +105,10 @@ void OTAA::computeFirmwareMD5() {
 }
 
 bool OTAA::begin(const char* serverUrl, const char* deviceId, const char* deviceToken) {
+    if (!_hal) {
+        _lastError = "HAL not initialized";
+        return false;
+    }
     confirmFirmwareValid();
     computeFirmwareMD5();
 
@@ -126,6 +132,10 @@ bool OTAA::begin(const char* serverUrl, const char* deviceId, const char* device
 }
 
 bool OTAA::beginWithActivationCode(const char* serverUrl, const char* activationCode) {
+    if (!_hal) {
+        _lastError = "HAL not initialized";
+        return false;
+    }
     confirmFirmwareValid();
     computeFirmwareMD5();
 
