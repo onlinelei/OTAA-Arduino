@@ -35,6 +35,8 @@ OTAA::OTAA()
     , _commandTimeout(300000)
     , _lastCommandCheckTime(0)
     , _commandCallback(nullptr)
+    , _pendingCommandId(0)
+    , _currentCommandIsAsync(false)
     , _logUploadInterval(20000)
     , _lastLogUploadTime(0)
     , _timeSynced(false)
@@ -252,11 +254,25 @@ bool OTAA::autoCheck() {
     // unsigned long 下溢成 ~42 亿，于是命令刚收到的同一轮就误判超时
     // （实测 play_audio 收到命令 3ms 后即报 "Command timeout: 36"，
     //   失败的 ack 先落地，平台随后拒绝播放成功的 ack）。
-    if (_currentCommandId > 0 &&
-        (_hal->millis() - _commandStartTime > _commandTimeout)) {
-        _hal->log('W', "OTAA", "Command timeout: %d", _currentCommandId);
-        ackCommand(_currentCommandId, false, "", "Timeout");
-        _currentCommandId = 0;
+    if (_currentCommandId > 0) {
+        // 异步命令（play_audio 等）跑满 `_commandTimeout`（默认 300s）是与真实结果
+        // **打平**的：实测看门狗抢在播放结束前 263ms 发出假的
+        // `status=3 "Timeout"` ack，随后真正的成功 ack 被平台幂等保护拒绝
+        // （只接受 status==1）→ **一次完美的 300 秒播放被记录成失败**。
+        //
+        // 正确做法不是简单加长超时（那只是把打平点往后挪），而是**续期**：
+        // 只要 handler 自报还活着（`isAlive()`，play_audio 就是"后台播放任务
+        // 还在"),就把起点往后推，看门狗只在 handler 真的不响了才判超时。
+        // 这样既能容忍任意长的异步任务，又保留了对"卡死的 handler"的兜底。
+        if (_currentCommandIsAsync &&
+            CommandDispatcher::getInstance().runningHandlerAlive()) {
+            _commandStartTime = now;
+        } else if (_hal->millis() - _commandStartTime > _commandTimeout) {
+            _hal->log('W', "OTAA", "Command timeout: %d", _currentCommandId);
+            ackCommand(_currentCommandId, false, "", "Timeout");
+            _currentCommandId = 0;
+            _currentCommandIsAsync = false;
+        }
     }
 
     // 日志上报
@@ -562,7 +578,10 @@ void OTAA::enableCommandDispatcher() {
 
     onCommand([this](int commandId, String command, String params) {
         CommandResult result = CommandDispatcher::getInstance().dispatch(commandId, command, params);
-        // 异步命令（如录音）由 handler 自行 ack，不自动 ack
+        // 异步命令（如 play_audio/record_audio）由 handler 自行 ack，不自动 ack。
+        // 记录下它是异步的：异步命令天然可能跑很久，看门狗必须区别对待
+        // （见 autoCheck() 里"命令超时"那一段）。
+        _currentCommandIsAsync = result.isAsync;
         if (!result.isAsync) {
             ackCommand(commandId, result.isSuccess, result.result, result.errorMsg);
         }
@@ -574,29 +593,94 @@ void OTAA::enableCommandDispatcher() {
 
 bool OTAA::checkCommands() {
     if (!_initialized) return false;
-    if (_currentCommandId > 0) return false;
 
-    DeviceCommand cmd = fetchPendingCommand();
-    if (cmd.id > 0) {
-        _currentCommandId = cmd.id;
-        _commandStartTime = _hal->millis();
+    // ⚠️ 这里**故意不**在 `_currentCommandId > 0` 时提前返回。
+    //
+    //    旧实现是「有命令在执行就不轮询」，后果是：`play_audio` 这类**异步**命令
+    //    会在平台侧一直停在 status=1（因为 ack 要等播放结束才发），而平台侧
+    //    「有 status=1 就不下发新命令」→ 播放中下发的命令**永远送不到设备**，
+    //    只能等整首播完。真机症状就是"下发的命令很久才播放"。
+    //
+    //    现在改成执行中也轮询，一次拿到两个好处：
+    //      ① 顺带上报 `executingCommandId`，让平台给这条长命令**保活**；
+    //      ② 播放中下发的新命令能送达，交给 handler 的 preempt() 决定是否让位。
+    DeviceCommand cmd = fetchPendingCommand(
+            _currentCommandId > 0 ? _currentCommandId : 0,
+            _pendingCommandId);
 
-        _hal->log('I', "OTAA", "Received command: %s (ID: %ld)",
-                  cmd.command.c_str(), cmd.id);
+    if (cmd.id <= 0) return false;
 
-        if (_commandCallback) {
-            _commandCallback(cmd.id, cmd.command, cmd.params);
+    if (_pendingCommandId > 0) {
+        if (cmd.id == _pendingCommandId) {
+            // 平台把我们槽里那条原样重发回来了（它仍有效）→ 说明还让不出位，
+            // 再试一次接管；仍然不行就继续等（**不**把它当新命令执行第二遍）。
+            _hal->log('I', "OTAA", "queued command %ld still pending, retrying preempt", cmd.id);
+            if (_currentCommandId <= 0) {
+                // 当前命令已经自己结束了（槽里那条却还没跑）→ 直接执行它
+                _pendingCommandId = 0;
+            } else if (CommandDispatcher::getInstance().preemptRunning(cmd.command)) {
+                CommandDispatcher::getInstance().clearRunning(_currentCommandId);
+                _currentCommandId = 0;
+                _currentCommandIsAsync = false;
+                _pendingCommandId = 0;
+            } else {
+                return false;   // 继续在槽里排队
+            }
+        } else {
+            // 平台发来的**不是**槽里那条 → 槽里那条已被 replace 取消/结束，
+            // 平台已把槽视为空并下发了新命令（见服务端 getPendingCommand 步骤③）。
+            // 丢掉旧的，执行新的。
+            _hal->log('W', "OTAA", "queued command %d superseded by %ld, dropping it",
+                      _pendingCommandId, cmd.id);
+            _pendingCommandId = 0;
         }
-        return true;
     }
-    return false;
+
+    if (_currentCommandId > 0 && _pendingCommandId == 0) {
+        // 正在执行某条命令：请它让位
+        _hal->log('I', "OTAA", "Command %ld arrived while %d running, asking to preempt",
+                  cmd.id, _currentCommandId);
+        if (!CommandDispatcher::getInstance().preemptRunning(cmd.command)) {
+            // 让不了位 → 记进 1 深槽（**只记 id**，payload 由平台每轮重发），
+            // 等当前命令 ack 后再执行。
+            _hal->log('W', "OTAA", "preempt denied, queueing command %ld", cmd.id);
+            _pendingCommandId = (int)cmd.id;
+            return false;
+        }
+        // 让位成功：旧命令的 handler 已停止，它的 ack 会走"已被替换"路径
+        // （平台侧那条命令已被 replace 置为 5，ack 会被幂等保护拒绝，属预期）。
+        CommandDispatcher::getInstance().clearRunning(_currentCommandId);
+        _currentCommandId = 0;
+        _currentCommandIsAsync = false;
+    }
+
+    _currentCommandId = cmd.id;
+    _pendingCommandId = 0;
+    _commandStartTime = _hal->millis();
+
+    _hal->log('I', "OTAA", "Received command: %s (ID: %ld)",
+              cmd.command.c_str(), cmd.id);
+
+    if (_commandCallback) {
+        _commandCallback(cmd.id, cmd.command, cmd.params);
+    }
+    return true;
 }
 
-DeviceCommand OTAA::fetchPendingCommand() {
+DeviceCommand OTAA::fetchPendingCommand(int keepAliveCommandId, int queuedCommandId) {
     DeviceCommand cmd;
     cmd.id = 0;
 
     String url = _serverUrl + "/api/device/commands/pending";
+    // 上报"我在执行 X / 我槽里等着 Y"：平台据此刷新对应命令的 executedAt（保活），
+    // 从而能把「真的在设备手上处理」和「命令丢了 / 设备死了」区分开。
+    if (keepAliveCommandId > 0) {
+        url += "?executingCommandId=" + String(keepAliveCommandId);
+    }
+    if (queuedCommandId > 0) {
+        url += (keepAliveCommandId > 0 ? "&" : "?");
+        url += "queuedCommandId=" + String(queuedCommandId);
+    }
     String response = httpGet(url);
 
     if (response.isEmpty()) return cmd;
@@ -645,6 +729,11 @@ bool OTAA::ackCommand(int commandId, bool success, const String& result, const S
 
     if (commandId == _currentCommandId) {
         _currentCommandId = 0;
+        _currentCommandIsAsync = false;
+        // 异步 handler 已结束，清掉"正在运行的 handler"记录。
+        // 暂存的待执行命令不在这里执行 —— 交给下一次 checkCommands()
+        // （≤5s）统一处理，避免在 ack 的回调链里再触发一次命令分发。
+        CommandDispatcher::getInstance().clearRunning(commandId);
     }
 
     return ok;

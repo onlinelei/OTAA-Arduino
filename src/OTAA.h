@@ -203,6 +203,18 @@ private:
     unsigned long _lastCommandCheckTime;
     CommandCallback _commandCallback;
 
+    // 1 深待执行槽：执行中收到新命令、而当前 handler 又无法让位时记下它，
+    // 等当前命令结束（ack）后立刻执行。避免"新命令直接丢掉"。
+    //
+    // ⚠️ 这里**只记 id、不存 payload**。payload 由平台在每次轮询时原样重发
+    //    （见服务端 getPendingCommand 步骤③）。这样做的关键收益：槽里那条一旦
+    //    被平台 replace 取消，设备手里就不会还捧着一条已作废的命令继续跑
+    //    （旧设计存 payload，替换后设备会先播旧的、再播新的）。
+    int _pendingCommandId;
+    // 执行中的命令是否为**异步**命令（execute() 返回 asyncStarted()）。
+    // 异步命令天然可能跑很久（如 play_audio 长达 300s），看门狗必须区别对待。
+    bool _currentCommandIsAsync;
+
     // 日志
     unsigned long _logUploadInterval;
     unsigned long _lastLogUploadTime;
@@ -228,7 +240,17 @@ private:
                              const uint8_t* data, size_t len, const String& filename);
 
     String generateDeviceId();
-    DeviceCommand fetchPendingCommand();
+    /**
+     * 取一条待执行命令。
+     * @param keepAliveCommandId 设备当前正在执行的命令 id（0 = 没有）。
+     * @param queuedCommandId    设备槽里暂存等待的命令 id（0 = 没有）。
+     *        两个 id 都会作为查询参数上报，平台据此**刷新对应命令的 executedAt**
+     *        （保活），用来区分"这条命令在设备手上、正在处理"和"命令丢了 /
+     *        设备死了"——没有这个信号，平台只能等满 timeoutSeconds(默认 300s)
+     *        才敢释放，期间**拒绝下发任何新命令**（真机症状：一次意外 =
+     *        后续 5 分钟全黑）。
+     */
+    DeviceCommand fetchPendingCommand(int keepAliveCommandId = 0, int queuedCommandId = 0);
 
     void confirmFirmwareValid();
     void computeFirmwareMD5();
