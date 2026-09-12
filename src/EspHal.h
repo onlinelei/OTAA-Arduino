@@ -87,21 +87,45 @@ public:
             esp_http_client_set_header(client, "Authorization",
                                        (std::string("Bearer ") + token).c_str());
         }
-        esp_http_client_set_post_field(client, body, strlen(body));
+        size_t bodyLen = strlen(body);
 
-        esp_err_t err = esp_http_client_perform(client);
-        int status = -1;
-        if (err == ESP_OK) {
-            status = esp_http_client_get_status_code(client);
-            if (status == 200) {
-                int content_length = esp_http_client_get_content_length(client);
-                if (content_length > 0) {
-                    response.resize(content_length);
-                    esp_http_client_read(client, &response[0], content_length);
-                }
+        // ⚠️ 这里**不能**用 esp_http_client_perform()：它内部会把响应体读完
+        // 并丢弃，之后再调 esp_http_client_read() 只会返回 0 字节，于是
+        // response 恒为空字符串，调用方（ackCommand 等）据此误判"请求失败" ——
+        // 表现为设备日志刷 "FAILED (empty response)"，而平台其实已经处理成功。
+        // 与 httpGet 保持一致，走手动 open → write → fetch_headers → read。
+        esp_err_t err = esp_http_client_open(client, (int)bodyLen);
+        if (err != ESP_OK) {
+            esp_http_client_cleanup(client);
+            return -1;
+        }
+
+        size_t written = 0;
+        while (written < bodyLen) {
+            int n = esp_http_client_write(client, body + written,
+                                          (int)(bodyLen - written));
+            if (n <= 0) {
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                return -1;
+            }
+            written += (size_t)n;
+        }
+
+        esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+
+        if (status == 200) {
+            char buf[512];
+            response.clear();
+            while (true) {
+                int read = esp_http_client_read(client, buf, sizeof(buf));
+                if (read <= 0) break;
+                response.append(buf, read);
             }
         }
 
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return status;
     }
@@ -143,22 +167,44 @@ public:
             esp_http_client_set_header(client, "Authorization",
                                        (std::string("Bearer ") + token).c_str());
         }
-        esp_http_client_set_post_field(client, (const char*)postData, totalLen);
+        // 同 httpPost：一旦用 esp_http_client_perform()，响应体会被它读完丢弃，
+        // 后面的 read 只能拿到 0 字节 → 录音明明上传成功，设备却判"Upload failed"
+        // 并 ack 一个 status=3 给平台（平台附件其实已经收全）。
+        esp_err_t err = esp_http_client_open(client, (int)totalLen);
+        if (err != ESP_OK) {
+            free(postData);
+            esp_http_client_cleanup(client);
+            return -1;
+        }
 
-        esp_err_t err = esp_http_client_perform(client);
-        int status = -1;
-        if (err == ESP_OK) {
-            status = esp_http_client_get_status_code(client);
-            if (status == 200) {
-                int content_length = esp_http_client_get_content_length(client);
-                if (content_length > 0) {
-                    response.resize(content_length);
-                    esp_http_client_read(client, &response[0], content_length);
-                }
+        size_t written = 0;
+        while (written < totalLen) {
+            int n = esp_http_client_write(client, (const char*)(postData + written),
+                                          (int)(totalLen - written));
+            if (n <= 0) {
+                free(postData);
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                return -1;
+            }
+            written += (size_t)n;
+        }
+
+        esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+
+        if (status == 200) {
+            char buf[512];
+            response.clear();
+            while (true) {
+                int read = esp_http_client_read(client, buf, sizeof(buf));
+                if (read <= 0) break;
+                response.append(buf, read);
             }
         }
 
         free(postData);
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return status;
     }

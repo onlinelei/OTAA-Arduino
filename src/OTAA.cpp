@@ -246,7 +246,14 @@ bool OTAA::autoCheck() {
     }
 
     // 命令超时
-    if (_currentCommandId > 0 && (now - _commandStartTime > _commandTimeout)) {
+    // ⚠️ 必须在这里重新取一次 millis()：本轮的 `now` 是函数入口取的，
+    // 而 checkCommands() 里的 _commandStartTime 是在 fetchPendingCommand()
+    // 的 HTTP 请求返回之后才赋值的，必然 >= now。拿 now 去减会让
+    // unsigned long 下溢成 ~42 亿，于是命令刚收到的同一轮就误判超时
+    // （实测 play_audio 收到命令 3ms 后即报 "Command timeout: 36"，
+    //   失败的 ack 先落地，平台随后拒绝播放成功的 ack）。
+    if (_currentCommandId > 0 &&
+        (_hal->millis() - _commandStartTime > _commandTimeout)) {
         _hal->log('W', "OTAA", "Command timeout: %d", _currentCommandId);
         ackCommand(_currentCommandId, false, "", "Timeout");
         _currentCommandId = 0;
@@ -498,11 +505,14 @@ String OTAA::httpPost(const String& url, const String& json) {
 
 String OTAA::httpPostMultipart(const String& url, const String& fieldName,
                                 const uint8_t* data, size_t len, const String& filename) {
+    _hal->log('I', "OTAA", "httpPostMultipart: url=%s field=%s file=%s size=%u",
+              url.c_str(), fieldName.c_str(), filename.c_str(), (unsigned)len);
     String response;
     int status = _hal->httpPostMultipart(url.c_str(),
                                           _deviceToken.length() > 0 ? _deviceToken.c_str() : nullptr,
                                           fieldName.c_str(), data, len,
                                           filename.c_str(), response);
+    _hal->log('I', "OTAA", "httpPostMultipart: HTTP %d, response=%s", status, response.c_str());
     if (status != 200) {
         setError(String("Upload failed: HTTP ") + String(status).c_str());
         return "";
@@ -552,7 +562,10 @@ void OTAA::enableCommandDispatcher() {
 
     onCommand([this](int commandId, String command, String params) {
         CommandResult result = CommandDispatcher::getInstance().dispatch(commandId, command, params);
-        ackCommand(commandId, result.isSuccess, result.result, result.errorMsg);
+        // 异步命令（如录音）由 handler 自行 ack，不自动 ack
+        if (!result.isAsync) {
+            ackCommand(commandId, result.isSuccess, result.result, result.errorMsg);
+        }
     });
 
     _hal->log('I', "OTAA", "CommandDispatcher enabled, %d handler(s): %s",
@@ -619,8 +632,16 @@ bool OTAA::ackCommand(int commandId, bool success, const String& result, const S
     String json;
     serializeJson(doc, json);
 
+    _hal->log('I', "OTAA", "ackCommand[%d] success=%d json=%s", commandId, success, json.c_str());
+
     String response = httpPost(url, json);
     bool ok = !response.isEmpty();
+
+    if (!ok) {
+        _hal->log('E', "OTAA", "ackCommand[%d] FAILED (empty response, lastError=%s)", commandId, _lastError.c_str());
+    } else {
+        _hal->log('I', "OTAA", "ackCommand[%d] OK response=%s", commandId, response.c_str());
+    }
 
     if (commandId == _currentCommandId) {
         _currentCommandId = 0;

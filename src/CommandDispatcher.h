@@ -20,13 +20,19 @@ struct CommandResult {
     bool isSuccess;
     String result;
     String errorMsg;
+    bool isAsync;  // true = handler 自己负责 ack（异步执行），dispatcher 不自动 ack
 
     static CommandResult success(const String& result = "") {
-        return {true, result, ""};
+        return {true, result, "", false};
     }
 
     static CommandResult failure(const String& errorMsg) {
-        return {false, "", errorMsg};
+        return {false, "", errorMsg, false};
+    }
+
+    // 异步：handler 已启动后台任务，会自行调用 ackCommand
+    static CommandResult asyncStarted() {
+        return {true, "{\"status\":\"async_started\"}", "", true};
     }
 };
 
@@ -68,6 +74,13 @@ public:
 
     bool registerHandler(CommandHandler* handler) {
         if (_count >= MAX_HANDLERS || !handler) return false;
+        // 去重：同一 command code 只注册一次
+        String cmd = handler->getCommand();
+        for (int i = 0; i < _count; i++) {
+            if (_handlers[i] && _handlers[i]->getCommand() == cmd) {
+                return false;  // 已注册，跳过
+            }
+        }
         _handlers[_count++] = handler;
         return true;
     }
@@ -96,7 +109,7 @@ public:
     int getHandlerCount() const { return _count; }
 };
 
-// 命令自注册宏
+// 命令自注册宏（registerHandler 内部去重，安全多 TU 包含）
 #define REGISTER_COMMAND(ClassName) \
     static bool _cmd_reg_##ClassName = []() { \
         static ClassName instance; \
